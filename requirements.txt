@@ -1,0 +1,6 @@
+pillow
+tensorflow==1.14.0
+numpy
+protobuf
+pyinstaller==3.4
+setuptools==44.1.0
