@@ -30,19 +30,20 @@ set(ICUB_APPLICATIONS_PREFIX "$ENV{ICUB_ROOT}" CACHE PATH "Application path pref
 
 # Generate the virtualenv and ensure it's up to date.
 add_custom_command(
-    OUTPUT venv
+    OUTPUT ${NAME_VENV}
     COMMAND ${VIRTUALENV} ${NAME_VENV}
 )
 add_custom_command(
-    OUTPUT venv.stamp
-    DEPENDS venv requirements.txt
+    OUTPUT requirements
+    DEPENDS ${NAME_VENV}
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/requirements.txt requirements.txt
     COMMAND ./${NAME_VENV}/bin/pip install -r requirements.txt
 )
 
 # Generate the binary using pyinstaller and put the binary in the bin folder
 add_custom_command(
-    OUTPUT build_binary
+    OUTPUT binary
+    DEPENDS ${NAME_VENV} requirements
     COMMAND ./${NAME_VENV}/bin/pyinstaller  ${CMAKE_CURRENT_SOURCE_DIR}/src/objectDetector.spec --distpath bin
 
 )
@@ -50,15 +51,14 @@ add_custom_command(
 
 # Custom targets for CMake
 # Create a virutal-env and install all requirements
-add_custom_target(install_requirements ALL
-    DEPENDS venv.stamp 
-    SOURCES requirements.txt
+add_custom_target(build  ALL
+    DEPENDS binary
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/requirements.txt
 )
 
-# Create the binary file using pyinstaller and install it
-add_custom_target(build_exe ALL
-    DEPENDS build_binary
-)
+
+
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/bin/${KEYWORD} PERMISSIONS ${PROGRAM_PERMISSIONS_DEFAULT} DESTINATION bin)
 
 add_subdirectory(app)
+

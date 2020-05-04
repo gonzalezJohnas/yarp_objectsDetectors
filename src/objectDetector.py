@@ -8,11 +8,9 @@ from utils import *
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '0'
 
-
 IS_RUNNING = True
 
 yarpLog = yarp.Log()
-
 
 
 class ObjectDetectorModule(yarp.RFModule):
@@ -78,10 +76,9 @@ class ObjectDetectorModule(yarp.RFModule):
 
         self.model_path = rf.check('model_path', yarp.Value(),
                                    'Path to the model').asString()
-        
-        
+
         self.threshold = rf.check('threshold', yarp.Value(0.5),
-                                   'Theshold detection score').asDouble()
+                                  'Theshold detection score').asDouble()
 
         # Create handle port to read message
         self.handle_port.open('/' + self.module_name)
@@ -184,17 +181,16 @@ class ObjectDetectorModule(yarp.RFModule):
 
     def respond(self, command, reply):
         ok = False
-        
+
         # Is the command recognized
-        rec = False 
-        
+        rec = False
+
         reply.clear()
 
         if command.get(0).asString() == "quit":
             reply.addString("quitting")
             return False
 
-        
         return True
 
     def getPeriod(self):
@@ -212,14 +208,9 @@ class ObjectDetectorModule(yarp.RFModule):
         self.input_port.read(self.input_yarp_image)
 
         if self.input_yarp_image:
-            frame = np.frombuffer(self.input_img_array, dtype=np.uint8).reshape((self.height_img, self.width_img, 3))
-
-            if self.width_img != 320:
-                img = Image.fromarray(frame).resize( (320, 240))
-                frame = np.array(img)
+            frame = np.frombuffer(self.input_img_array, dtype=np.uint8).reshape((self.height_img, self.width_img, 3)).copy()
 
             image_np_expanded = np.expand_dims(frame, axis=0)
-
 
             # # Extract image tensor
             image_tensor = self.detection_graph.get_tensor_by_name('image_tensor:0')
@@ -237,7 +228,6 @@ class ObjectDetectorModule(yarp.RFModule):
                 [boxes, scores, classes, num_detections],
                 feed_dict={image_tensor: image_np_expanded})
 
-            
             if self.output_img_port.getOutputCount():
                 # # Visualization of the results of a detection.
                 visualize_boxes_and_labels_on_image_array(
@@ -251,14 +241,11 @@ class ObjectDetectorModule(yarp.RFModule):
 
                 self.display_buf_array = frame
                 self.write_yarp_image(frame)
-                
+
             if self.output_objects_port.getOutputCount():
                 self.write_objects(classes, boxes, scores)
 
-
-
         return True
-
 
     def write_objects(self, classes, boxes, scores):
         """
@@ -272,12 +259,12 @@ class ObjectDetectorModule(yarp.RFModule):
         list_objects_bottle.clear()
 
         for boxe, score, cl in zip(np.squeeze(boxes), np.squeeze(scores), np.squeeze(classes)):
-                             
+
             if score > self.threshold:
-                left, top, right, bottom = get_bouding_box_coordinates(boxe, (320, 240))
-                if cl in self.category_index.keys():
-                    class_name = self.category_index[cl]['name']
-                    
+                left, top, right, bottom = get_bouding_box_coordinates(boxe, (self.width_img, self.height_img))
+
+                class_name = self.category_index[cl]['name']
+
                 yarp_object_bottle = yarp.Bottle()
                 yarp_object_bottle.addString(class_name)
                 yarp_object_bottle.addDouble(float(round(score, 2)))
@@ -287,15 +274,13 @@ class ObjectDetectorModule(yarp.RFModule):
                 yarp_coordinates.addDouble(top)
                 yarp_coordinates.addDouble(right)
                 yarp_coordinates.addDouble(bottom)
-                
+
                 yarp_object_bottle.addList().read(yarp_coordinates)
-                
-                
+
                 list_objects_bottle.addList().read(yarp_object_bottle)
 
         if len(scores):
             self.output_objects_port.write(list_objects_bottle)
-
 
     def write_yarp_image(self, frame):
         """
@@ -304,10 +289,9 @@ class ObjectDetectorModule(yarp.RFModule):
         :return:
         """
         self.display_buf_image = yarp.ImageRgb()
-        self.display_buf_image.resize(320, 240)
-        self.display_buf_image.setExternal(frame.tobytes(), 320, 240)
+        self.display_buf_image.resize(self.width_img, self.height_img)
+        self.display_buf_image.setExternal(frame.tobytes(), self.width_img, self.height_img)
         self.output_img_port.write(self.display_buf_image)
-
 
     def write_template_face(self, template_img):
         """
@@ -332,7 +316,7 @@ if __name__ == '__main__':
 
     objectsDetectorModule = ObjectDetectorModule()
 
-    rf = yarp.ResourceFinder()  
+    rf = yarp.ResourceFinder()
     rf.setVerbose(True)
     rf.setDefaultContext('objectDetector')
     rf.setDefaultConfigFile('objectDetector.ini')

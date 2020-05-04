@@ -2,4 +2,4 @@
 .history
 .idea
 build
-**/.history
+src/__pycache__
