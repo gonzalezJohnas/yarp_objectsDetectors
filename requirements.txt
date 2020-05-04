@@ -1,6 +1,6 @@
 pillow
 setuptools==44.1.0
-tensorflow==1.14.0
+tensorflow==1.15.2
 numpy
 protobuf
 pyinstaller==3.4
