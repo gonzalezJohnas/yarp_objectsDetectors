@@ -257,7 +257,7 @@ class ObjectDetectorModule(yarp.RFModule):
         """
         list_objects_bottle = yarp.Bottle()
         list_objects_bottle.clear()
-
+        write_bottle = False
         for boxe, score, cl in zip(np.squeeze(boxes), np.squeeze(scores), np.squeeze(classes)):
 
             if score > self.threshold:
@@ -266,7 +266,7 @@ class ObjectDetectorModule(yarp.RFModule):
                 class_name = self.category_index[cl]['name']
 
                 yarp_object_bottle = yarp.Bottle()
-                yarp_object_bottle.addString(class_name)
+                yarp_object_bottle.addString(str(class_name))
                 yarp_object_bottle.addDouble(float(round(score, 2)))
 
                 yarp_coordinates = yarp.Bottle()
@@ -278,8 +278,9 @@ class ObjectDetectorModule(yarp.RFModule):
                 yarp_object_bottle.addList().read(yarp_coordinates)
 
                 list_objects_bottle.addList().read(yarp_object_bottle)
+                write_bottle = True
 
-        if len(scores):
+        if write_bottle:
             self.output_objects_port.write(list_objects_bottle)
 
     def write_yarp_image(self, frame):
