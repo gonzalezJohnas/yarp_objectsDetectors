@@ -80,6 +80,9 @@ class ObjectDetectorModule(yarp.RFModule):
         self.threshold = rf.check('threshold', yarp.Value(0.5),
                                   'Theshold detection score').asDouble()
 
+        self.process = rf.check('process', yarp.Value(True),
+                                'enable automatic run').asBool()
+
         # Create handle port to read message
         self.handle_port.open('/' + self.module_name)
 
@@ -120,21 +123,21 @@ class ObjectDetectorModule(yarp.RFModule):
         return True
 
     def _load_graph(self):
-        self.detection_graph = tf.compat.v1.Graph()
+        self.detection_graph = tf.Graph()
         with self.detection_graph.as_default():
             # Load a (frozen) Tensorflow model into memory.
-            od_graph_def = tf.compat.v1.GraphDef()
+            od_graph_def = tf.GraphDef()
             try:
-                with tf.io.gfile.GFile(self.model_path, 'rb') as fid:
+                with tf.gfile.GFile(self.model_path, 'rb') as fid:
                     serialized_graph = fid.read()
                     od_graph_def.ParseFromString(serialized_graph)
-                    tf.compat.v1.import_graph_def(od_graph_def, name='')
+                    tf.import_graph_def(od_graph_def, name='')
 
             except Exception as e:
                 print(e)
                 return False
 
-        self.session = tf.compat.v1.Session(graph=self.detection_graph)
+        self.session = tf.Session(graph=self.detection_graph)
 
         image_tensor = self.detection_graph.get_tensor_by_name('image_tensor:0')
         classes = self.detection_graph.get_tensor_by_name('detection_classes:0')
@@ -190,6 +193,11 @@ class ObjectDetectorModule(yarp.RFModule):
         if command.get(0).asString() == "quit":
             reply.addString("quitting")
             return False
+        elif command.get(0).asString() == "process":
+            self.process = True if command.get(1).asString() == 'on' else False
+            reply.addString("ok")
+            ok = True
+            rec = True
 
         return True
 
@@ -207,8 +215,9 @@ class ObjectDetectorModule(yarp.RFModule):
         # Read the data from the port into the image
         self.input_port.read(self.input_yarp_image)
 
-        if self.input_yarp_image:
-            frame = np.frombuffer(self.input_img_array, dtype=np.uint8).reshape((self.height_img, self.width_img, 3)).copy()
+        if self.input_yarp_image and self.process:
+            frame = np.frombuffer(self.input_img_array, dtype=np.uint8).reshape(
+                (self.height_img, self.width_img, 3)).copy()
 
             image_np_expanded = np.expand_dims(frame, axis=0)
 

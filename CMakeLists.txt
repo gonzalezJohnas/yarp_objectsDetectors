@@ -31,7 +31,7 @@ set(ICUB_APPLICATIONS_PREFIX "$ENV{ICUB_ROOT}" CACHE PATH "Application path pref
 # Generate the virtualenv and ensure it's up to date.
 add_custom_command(
     OUTPUT ${NAME_VENV}
-    COMMAND ${VIRTUALENV} ${NAME_VENV}
+    COMMAND ${VIRTUALENV} --python=/usr/bin/python ${NAME_VENV}
 )
 add_custom_command(
     OUTPUT requirements
