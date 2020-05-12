@@ -246,7 +246,8 @@ class ObjectDetectorModule(yarp.RFModule):
                     np.squeeze(scores),
                     self.category_index,
                     use_normalized_coordinates=True,
-                    line_thickness=8, )
+                    line_thickness=8,
+                    min_score_thresh=self.threshold)
 
                 self.display_buf_array = frame
                 self.write_yarp_image(frame)
