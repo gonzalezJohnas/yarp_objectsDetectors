@@ -198,6 +198,15 @@ class ObjectDetectorModule(yarp.RFModule):
             reply.addString("ok")
             ok = True
             rec = True
+        elif command.get(0).asString() == "set":
+            if command.get(1).asString() == 'thr' and command.get(2).isDouble():
+                self.threshold = command.get(2).asDouble() if (command.get(2).asDouble() > 0.0 and command.get(2).asDouble() < 1.0) else self.threshold
+                reply.addString("ok")
+            else:
+                reply.addString("nack")
+
+            ok = True
+            rec = True
 
         return True
 
