@@ -33,18 +33,19 @@ class ObjectDetectorModule(yarp.RFModule):
         self.attach(self.handle_port)
 
         # Define vars to receive an image
-        self.input_port = yarp.Port()
+        self.input_port = yarp.BufferedPortImageRgb()
+        
         # Create numpy array to receive the image and the YARP image wrapped around it
         self.input_img_array = None
-        self.input_yarp_image = None
 
         # Define vars for outputing image
         self.output_objects_port = yarp.Port()
         self.output_raw_port = yarp.Port()
 
         self.output_img_port = yarp.Port()
-        self.display_buf_image = yarp.ImageRgb()
         self.display_buf_array = None
+        self.display_buf_image = yarp.ImageRgb()
+
 
         self.module_name = None
         self.width_img = None
@@ -80,6 +81,9 @@ class ObjectDetectorModule(yarp.RFModule):
         self.threshold = rf.check('threshold', yarp.Value(0.5),
                                   'Theshold detection score').asDouble()
 
+        self.filtering_distance = rf.check('filtering_distance', yarp.Value(15),
+                                  'Filtering distance in pixels').asInt()
+
         self.process = rf.check('process', yarp.Value(True),
                                 'enable automatic run').asBool()
 
@@ -103,10 +107,7 @@ class ObjectDetectorModule(yarp.RFModule):
         # Create a port to receive an image
         self.input_port.open('/' + self.module_name + '/image:i')
         self.input_img_array = np.zeros((self.height_img, self.width_img, 3), dtype=np.uint8).tobytes()
-        self.input_yarp_image = yarp.ImageRgb()
-        self.input_yarp_image.resize(self.width_img, self.height_img)
 
-        self.input_yarp_image.setExternal(self.input_img_array, self.width_img, self.height_img)
 
         yarpLog.info('Model initialization ')
 
@@ -187,24 +188,43 @@ class ObjectDetectorModule(yarp.RFModule):
 
         # Is the command recognized
         rec = False
-
+       
         reply.clear()
 
         if command.get(0).asString() == "quit":
             reply.addString("quitting")
             return False
+
+        elif command.get(0).asString() == "help":
+            reply.addString("Object detector module command are:\n")
+            reply.addString("set/get thr <double> -> to get/set the detection threshold\n")
+            reply.addString("set/get filt <int> -> to get/set the filtering distance for boxes")
+            ok = True
+            rec = True
+
         elif command.get(0).asString() == "process":
             self.process = True if command.get(1).asString() == 'on' else False
             reply.addString("ok")
             ok = True
             rec = True
+
         elif command.get(0).asString() == "set":
             if command.get(1).asString() == 'thr' and command.get(2).isDouble():
                 self.threshold = command.get(2).asDouble() if (command.get(2).asDouble() > 0.0 and command.get(2).asDouble() < 1.0) else self.threshold
                 reply.addString("ok")
+            elif command.get(1).asString() == 'filt' and command.get(2).isInt():
+                self.filtering_distance =  command.get(2).asInt() if command.get(2).asDouble() > 0 else self.filtering_distance
+                reply.addString("ok")
             else:
                 reply.addString("nack")
 
+        elif command.get(0).asString() == "get":
+            if command.get(1).asString() == 'thr' :
+                reply.addDouble(self.threshold)
+            elif command.get(1).asString() == 'filt':
+                reply.addInt(self.filtering_distance)
+            else:
+                reply.addString("nack")
             ok = True
             rec = True
 
@@ -222,9 +242,10 @@ class ObjectDetectorModule(yarp.RFModule):
     def updateModule(self):
 
         # Read the data from the port into the image
-        self.input_port.read(self.input_yarp_image)
+        input_yarp_image = self.input_port.read(False)
 
-        if self.input_yarp_image and self.process:
+        if input_yarp_image and self.process:
+            input_yarp_image.setExternal(self.input_img_array, self.width_img,self.height_img)
             frame = np.frombuffer(self.input_img_array, dtype=np.uint8).reshape(
                 (self.height_img, self.width_img, 3)).copy()
 
@@ -246,6 +267,9 @@ class ObjectDetectorModule(yarp.RFModule):
                 [boxes, scores, classes, num_detections],
                 feed_dict={image_tensor: image_np_expanded})
 
+            self.filter_boxes(boxes)
+
+
             if self.output_img_port.getOutputCount():
                 # # Visualization of the results of a detection.
                 visualize_boxes_and_labels_on_image_array(
@@ -265,6 +289,21 @@ class ObjectDetectorModule(yarp.RFModule):
                 self.write_objects(classes, boxes, scores)
 
         return True
+
+
+    def filter_boxes(self, boxes):
+        for i, boxe in enumerate(np.squeeze(boxes)):
+            left, top, right, bottom = get_bouding_box_coordinates(boxe, (self.width_img, self.height_img))
+
+            for j, b in enumerate(np.squeeze(boxes[i+1:])):
+                n_left, n_top, n_right, n_bottom = get_bouding_box_coordinates(b, (self.width_img, self.height_img))
+
+                if abs(left-n_left) < self.filtering_distance:
+                    index_pop = i if (n_bottom - n_top) < (bottom - top) else i + j + 1
+                    boxes.pop(index_pop)
+        
+        
+
 
     def write_objects(self, classes, boxes, scores):
         """
