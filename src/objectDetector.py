@@ -13,6 +13,13 @@ IS_RUNNING = True
 yarpLog = yarp.Log()
 
 
+def info(msg):
+    print("[INFO] {}".format(msg))
+
+
+def error(msg):
+    print("[ERROR] {}".format(msg))
+
 class ObjectDetectorModule(yarp.RFModule):
     """
     Description:
@@ -109,18 +116,18 @@ class ObjectDetectorModule(yarp.RFModule):
         self.input_img_array = np.zeros((self.height_img, self.width_img, 3), dtype=np.uint8).tobytes()
 
 
-        yarpLog.info('Model initialization ')
+        info('Model initialization ')
 
         if not self._read_label():
-            yarpLog.error("Unable to load label file")
+            error("Unable to load label file")
             return False
 
         if not self._load_graph():
-            yarpLog.error("Unable to load model")
+            error("Unable to load model")
             return False
 
         # self.cap = cv2.VideoCapture(0)  # Change only if you have more than one webcams
-        yarpLog.info('Module initialization done, Running the model')
+        info('Module initialization done, Running the model')
         return True
 
     def _load_graph(self):
@@ -213,7 +220,7 @@ class ObjectDetectorModule(yarp.RFModule):
                 self.threshold = command.get(2).asDouble() if (command.get(2).asDouble() > 0.0 and command.get(2).asDouble() < 1.0) else self.threshold
                 reply.addString("ok")
             elif command.get(1).asString() == 'filt' and command.get(2).isInt():
-                self.filtering_distance =  command.get(2).asInt() if command.get(2).asDouble() > 0 else self.filtering_distance
+                self.filtering_distance =  command.get(2).asInt() if command.get(2).asInt() >= 0 else self.filtering_distance
                 reply.addString("ok")
             else:
                 reply.addString("nack")
@@ -267,16 +274,20 @@ class ObjectDetectorModule(yarp.RFModule):
                 [boxes, scores, classes, num_detections],
                 feed_dict={image_tensor: image_np_expanded})
 
-            self.filter_boxes(boxes)
+            boxes = np.squeeze(boxes)
+            scores = np.squeeze(scores)
+            indexes_2delete = self.filter_boxes(boxes, scores)
 
+            boxes = np.delete(boxes, indexes_2delete, axis=0)
+            scores = np.delete(scores, indexes_2delete, axis=0)
 
             if self.output_img_port.getOutputCount():
                 # # Visualization of the results of a detection.
                 visualize_boxes_and_labels_on_image_array(
                     frame,
-                    np.squeeze(boxes),
+                    boxes,
                     np.squeeze(classes).astype(np.int32),
-                    np.squeeze(scores),
+                    scores,
                     self.category_index,
                     use_normalized_coordinates=True,
                     line_thickness=8,
@@ -291,16 +302,26 @@ class ObjectDetectorModule(yarp.RFModule):
         return True
 
 
-    def filter_boxes(self, boxes):
-        for i, boxe in enumerate(np.squeeze(boxes)):
-            left, top, right, bottom = get_bouding_box_coordinates(boxe, (self.width_img, self.height_img))
+    def filter_boxes(self, boxes, scores):
+        index_delete = []
+        for i, (boxe, score) in enumerate(zip(boxes, scores)):
+            
+            if score > self.threshold :
+                left, top, right, bottom = get_bouding_box_coordinates(boxe, (self.width_img, self.height_img))
 
-            for j, b in enumerate(np.squeeze(boxes[i+1:])):
-                n_left, n_top, n_right, n_bottom = get_bouding_box_coordinates(b, (self.width_img, self.height_img))
+                for j,  (b, s) in enumerate(zip(boxes[i+1:], scores[i+1:])):
+                    if s > self.threshold:
+                        index = j + i +1
+                        n_left, n_top, n_right, n_bottom = get_bouding_box_coordinates(b, (self.width_img, self.height_img))
+                        diff = abs(left-n_left)
+                        if  0 < diff < self.filtering_distance and index not in index_delete and i not in index_delete:
+                            info("A " + str(abs(left-n_left)))
 
-                if abs(left-n_left) < self.filtering_distance:
-                    index_pop = i if (n_bottom - n_top) < (bottom - top) else i + j + 1
-                    boxes.pop(index_pop)
+                            index_pop = i if (n_bottom - n_top) > (bottom - top) else index 
+                            index_delete.append(index_pop)
+        
+        
+        return  index_delete
         
         
 
@@ -316,7 +337,7 @@ class ObjectDetectorModule(yarp.RFModule):
         list_objects_bottle = yarp.Bottle()
         list_objects_bottle.clear()
         write_bottle = False
-        for boxe, score, cl in zip(np.squeeze(boxes), np.squeeze(scores), np.squeeze(classes)):
+        for boxe, score, cl in zip(boxes, scores, np.squeeze(classes)):
 
             if score > self.threshold:
                 left, top, right, bottom = get_bouding_box_coordinates(boxe, (self.width_img, self.height_img))
