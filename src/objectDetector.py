@@ -13,6 +13,13 @@ IS_RUNNING = True
 yarpLog = yarp.Log()
 
 
+def info(msg):
+    print("[INFO] {}".format(msg))
+
+
+def error(msg):
+    print("[ERROR] {}".format(msg))
+
 class ObjectDetectorModule(yarp.RFModule):
     """
     Description:
@@ -84,6 +91,7 @@ class ObjectDetectorModule(yarp.RFModule):
         self.nms_iou_threshold = rf.check('filtering_distance', yarp.Value(0.4),
                                   'Filtering distance in pixels').asDouble()
 
+
         self.process = rf.check('process', yarp.Value(True),
                                 'enable automatic run').asBool()
 
@@ -109,18 +117,18 @@ class ObjectDetectorModule(yarp.RFModule):
         self.input_img_array = np.zeros((self.height_img, self.width_img, 3), dtype=np.uint8).tobytes()
 
 
-        yarpLog.info('Model initialization ')
+        info('Model initialization ')
 
         if not self._read_label():
-            yarpLog.error("Unable to load label file")
+            error("Unable to load label file")
             return False
 
         if not self._load_graph():
-            yarpLog.error("Unable to load model")
+            error("Unable to load model")
             return False
 
         # self.cap = cv2.VideoCapture(0)  # Change only if you have more than one webcams
-        yarpLog.info('Module initialization done, Running the model')
+        info('Module initialization done, Running the model')
         return True
 
     def _load_graph(self):
@@ -212,8 +220,10 @@ class ObjectDetectorModule(yarp.RFModule):
             if command.get(1).asString() == 'thr' and command.get(2).isDouble():
                 self.threshold = command.get(2).asDouble() if (command.get(2).asDouble() > 0.0 and command.get(2).asDouble() < 1.0) else self.threshold
                 reply.addString("ok")
+
             elif command.get(1).asString() == 'filt' and command.get(2).isDouble():
                 self.nms_iou_threshold =  command.get(2).asDouble() if command.get(2).asDouble() > 0 else self.nms_iou_threshold
+
                 reply.addString("ok")
             else:
                 reply.addString("nack")
@@ -223,6 +233,7 @@ class ObjectDetectorModule(yarp.RFModule):
                 reply.addDouble(self.threshold)
             elif command.get(1).asString() == 'filt':
                 reply.addInt(self.nms_iou_threshold)
+
             else:
                 reply.addString("nack")
             ok = True
@@ -369,6 +380,9 @@ class ObjectDetectorModule(yarp.RFModule):
 
         return np.array(filt_boxes), np.array(filt_scores)
 
+        
+        
+
 
     def write_objects(self, classes, boxes, scores):
         """
@@ -381,8 +395,9 @@ class ObjectDetectorModule(yarp.RFModule):
         list_objects_bottle = yarp.Bottle()
         list_objects_bottle.clear()
         write_bottle = False
-        # self.filter_boxes(boxes)
+
         for boxe, score, cl in zip(np.squeeze(boxes), np.squeeze(scores), np.squeeze(classes)):
+
 
             if score > self.threshold:
                 left, top, right, bottom = get_bouding_box_coordinates(boxe, (self.width_img, self.height_img))
