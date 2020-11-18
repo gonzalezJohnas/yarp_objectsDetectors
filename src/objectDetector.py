@@ -33,18 +33,19 @@ class ObjectDetectorModule(yarp.RFModule):
         self.attach(self.handle_port)
 
         # Define vars to receive an image
-        self.input_port = yarp.Port()
+        self.input_port = yarp.BufferedPortImageRgb()
+        
         # Create numpy array to receive the image and the YARP image wrapped around it
         self.input_img_array = None
-        self.input_yarp_image = None
 
         # Define vars for outputing image
         self.output_objects_port = yarp.Port()
         self.output_raw_port = yarp.Port()
 
         self.output_img_port = yarp.Port()
-        self.display_buf_image = yarp.ImageRgb()
         self.display_buf_array = None
+        self.display_buf_image = yarp.ImageRgb()
+
 
         self.module_name = None
         self.width_img = None
@@ -80,6 +81,9 @@ class ObjectDetectorModule(yarp.RFModule):
         self.threshold = rf.check('threshold', yarp.Value(0.5),
                                   'Theshold detection score').asDouble()
 
+        self.nms_iou_threshold = rf.check('filtering_distance', yarp.Value(0.4),
+                                  'Filtering distance in pixels').asDouble()
+
         self.process = rf.check('process', yarp.Value(True),
                                 'enable automatic run').asBool()
 
@@ -103,10 +107,7 @@ class ObjectDetectorModule(yarp.RFModule):
         # Create a port to receive an image
         self.input_port.open('/' + self.module_name + '/image:i')
         self.input_img_array = np.zeros((self.height_img, self.width_img, 3), dtype=np.uint8).tobytes()
-        self.input_yarp_image = yarp.ImageRgb()
-        self.input_yarp_image.resize(self.width_img, self.height_img)
 
-        self.input_yarp_image.setExternal(self.input_img_array, self.width_img, self.height_img)
 
         yarpLog.info('Model initialization ')
 
@@ -187,24 +188,43 @@ class ObjectDetectorModule(yarp.RFModule):
 
         # Is the command recognized
         rec = False
-
+       
         reply.clear()
 
         if command.get(0).asString() == "quit":
             reply.addString("quitting")
             return False
+
+        elif command.get(0).asString() == "help":
+            reply.addString("Object detector module command are:\n")
+            reply.addString("set/get thr <double> -> to get/set the detection threshold\n")
+            reply.addString("set/get filt <int> -> to get/set the filtering distance for boxes")
+            ok = True
+            rec = True
+
         elif command.get(0).asString() == "process":
             self.process = True if command.get(1).asString() == 'on' else False
             reply.addString("ok")
             ok = True
             rec = True
+
         elif command.get(0).asString() == "set":
             if command.get(1).asString() == 'thr' and command.get(2).isDouble():
                 self.threshold = command.get(2).asDouble() if (command.get(2).asDouble() > 0.0 and command.get(2).asDouble() < 1.0) else self.threshold
                 reply.addString("ok")
+            elif command.get(1).asString() == 'filt' and command.get(2).isDouble():
+                self.nms_iou_threshold =  command.get(2).asDouble() if command.get(2).asDouble() > 0 else self.nms_iou_threshold
+                reply.addString("ok")
             else:
                 reply.addString("nack")
 
+        elif command.get(0).asString() == "get":
+            if command.get(1).asString() == 'thr' :
+                reply.addDouble(self.threshold)
+            elif command.get(1).asString() == 'filt':
+                reply.addInt(self.nms_iou_threshold)
+            else:
+                reply.addString("nack")
             ok = True
             rec = True
 
@@ -222,9 +242,10 @@ class ObjectDetectorModule(yarp.RFModule):
     def updateModule(self):
 
         # Read the data from the port into the image
-        self.input_port.read(self.input_yarp_image)
+        input_yarp_image = self.input_port.read(False)
 
-        if self.input_yarp_image and self.process:
+        if input_yarp_image and self.process:
+            input_yarp_image.setExternal(self.input_img_array, self.width_img,self.height_img)
             frame = np.frombuffer(self.input_img_array, dtype=np.uint8).reshape(
                 (self.height_img, self.width_img, 3)).copy()
 
@@ -246,17 +267,24 @@ class ObjectDetectorModule(yarp.RFModule):
                 [boxes, scores, classes, num_detections],
                 feed_dict={image_tensor: image_np_expanded})
 
+            boxes = np.squeeze(boxes)
+            scores = np.squeeze(scores)
+
+            boxes, scores = self.filter_boxes(boxes, scores)
+            boxes, scores = self.non_max_suppression_fast(boxes, scores)
+
+
             if self.output_img_port.getOutputCount():
                 # # Visualization of the results of a detection.
                 visualize_boxes_and_labels_on_image_array(
                     frame,
-                    np.squeeze(boxes),
+                    boxes,
                     np.squeeze(classes).astype(np.int32),
-                    np.squeeze(scores),
+                    scores,
                     self.category_index,
                     use_normalized_coordinates=True,
-                    line_thickness=8,
-                    min_score_thresh=self.threshold)
+                    line_thickness=4,
+                    min_score_thresh=0.1)
 
                 self.display_buf_array = frame
                 self.write_yarp_image(frame)
@@ -265,6 +293,82 @@ class ObjectDetectorModule(yarp.RFModule):
                 self.write_objects(classes, boxes, scores)
 
         return True
+
+    def non_max_suppression_fast(self, boxes, scores, probs=None, overlapThresh=0.3):
+
+        # if there are no boxes, return an empty list
+        if len(boxes) == 0:
+            return np.array([]), np.array([])
+
+        # if the bounding boxes are integers, convert them to floats -- this
+        # is important since we'll be doing a bunch of divisions
+        # if boxes.dtype.kind == "i":
+        #     boxes = boxes.astype("float")
+
+        # initialize the list of picked indexes
+        pick = []
+
+        # grab the coordinates of the bounding boxes
+        x1 = boxes[:, 0]
+        y1 = boxes[:, 1]
+        x2 = boxes[:, 2]
+        y2 = boxes[:, 3]
+
+        # compute the area of the bounding boxes and grab the indexes to sort
+        # (in the case that no probabilities are provided, simply sort on the
+        # bottom-left y-coordinate)
+        area = (x2 - x1 + 1) * (y2 - y1 + 1)
+        idxs = y2
+
+        # if probabilities are provided, sort on them instead
+        if probs is not None:
+            idxs = probs
+
+        # sort the indexes
+        idxs = np.argsort(idxs)
+
+        # keep looping while some indexes still remain in the indexes list
+        while len(idxs) > 0:
+            # grab the last index in the indexes list and add the index value
+            # to the list of picked indexes
+            last = len(idxs) - 1
+            i = idxs[last]
+            pick.append(i)
+
+            # find the largest (x, y) coordinates for the start of the bounding
+            # box and the smallest (x, y) coordinates for the end of the bounding
+            # box
+            xx1 = np.maximum(x1[i], x1[idxs[:last]])
+            yy1 = np.maximum(y1[i], y1[idxs[:last]])
+            xx2 = np.minimum(x2[i], x2[idxs[:last]])
+            yy2 = np.minimum(y2[i], y2[idxs[:last]])
+
+            # compute the width and height of the bounding box
+            w = np.maximum(0, xx2 - xx1 + 1)
+            h = np.maximum(0, yy2 - yy1 + 1)
+
+            # compute the ratio of overlap
+            overlap = (w * h) / area[idxs[:last]]
+
+            # delete all indexes from the index list that have overlap greater
+            # than the provided overlap threshold
+            idxs = np.delete(idxs, np.concatenate(([last],
+                                                   np.where(overlap > overlapThresh)[0])))
+
+        # return only the bounding boxes that were picked
+        return boxes[pick], scores[pick]
+
+
+    def filter_boxes(self, boxes, scores):
+        filt_boxes = []
+        filt_scores = []
+        for i, (boxe, score) in enumerate(zip(boxes, scores)):
+            if score > self.threshold :
+                filt_boxes.append(boxe)
+                filt_scores.append(score)
+
+        return np.array(filt_boxes), np.array(filt_scores)
+
 
     def write_objects(self, classes, boxes, scores):
         """
@@ -277,6 +381,7 @@ class ObjectDetectorModule(yarp.RFModule):
         list_objects_bottle = yarp.Bottle()
         list_objects_bottle.clear()
         write_bottle = False
+        # self.filter_boxes(boxes)
         for boxe, score, cl in zip(np.squeeze(boxes), np.squeeze(scores), np.squeeze(classes)):
 
             if score > self.threshold:
