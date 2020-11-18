@@ -396,7 +396,7 @@ class ObjectDetectorModule(yarp.RFModule):
         list_objects_bottle.clear()
         write_bottle = False
 
-        for boxe, score, cl in zip(np.squeeze(boxes), np.squeeze(scores), np.squeeze(classes)):
+        for boxe, score, cl in zip(boxes, scores, np.squeeze(classes)):
 
 
             if score > self.threshold:
