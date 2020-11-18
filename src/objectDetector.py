@@ -88,7 +88,7 @@ class ObjectDetectorModule(yarp.RFModule):
         self.threshold = rf.check('threshold', yarp.Value(0.5),
                                   'Theshold detection score').asDouble()
 
-        self.nms_iou_threshold = rf.check('filtering_distance', yarp.Value(0.4),
+        self.nms_iou_threshold = rf.check('filtering_distance', yarp.Value(0.8),
                                   'Filtering distance in pixels').asDouble()
 
 
@@ -229,10 +229,10 @@ class ObjectDetectorModule(yarp.RFModule):
                 reply.addString("nack")
 
         elif command.get(0).asString() == "get":
-            if command.get(1).asString() == 'thr' :
+            if command.get(1).asString() == 'thr':
                 reply.addDouble(self.threshold)
             elif command.get(1).asString() == 'filt':
-                reply.addInt(self.nms_iou_threshold)
+                reply.addDouble(self.nms_iou_threshold)
 
             else:
                 reply.addString("nack")
@@ -282,7 +282,7 @@ class ObjectDetectorModule(yarp.RFModule):
             scores = np.squeeze(scores)
 
             boxes, scores = self.filter_boxes(boxes, scores)
-            boxes, scores = self.non_max_suppression_fast(boxes, scores)
+            boxes, scores = self.non_max_suppression_fast(boxes, scores, overlapThresh=self.nms_iou_threshold)
 
 
             if self.output_img_port.getOutputCount():
@@ -329,7 +329,7 @@ class ObjectDetectorModule(yarp.RFModule):
         # (in the case that no probabilities are provided, simply sort on the
         # bottom-left y-coordinate)
         area = (x2 - x1 + 1) * (y2 - y1 + 1)
-        idxs = y2
+        idxs = x2
 
         # if probabilities are provided, sort on them instead
         if probs is not None:
@@ -361,10 +361,12 @@ class ObjectDetectorModule(yarp.RFModule):
             # compute the ratio of overlap
             overlap = (w * h) / area[idxs[:last]]
 
+
             # delete all indexes from the index list that have overlap greater
             # than the provided overlap threshold
             idxs = np.delete(idxs, np.concatenate(([last],
                                                    np.where(overlap > overlapThresh)[0])))
+
 
         # return only the bounding boxes that were picked
         return boxes[pick], scores[pick]
