@@ -222,7 +222,7 @@ class ObjectDetectorModule(yarp.RFModule):
                 reply.addString("ok")
 
             elif command.get(1).asString() == 'filt' and command.get(2).isDouble():
-                self.nms_iou_threshold =  command.get(2).asDouble() if command.get(2).asDouble() > 0 else self.nms_iou_threshold
+                self.nms_iou_threshold =  command.get(2).asDouble() if (command.get(2).asDouble() > 0.0 and command.get(2).asDouble() < 1.0) else self.nms_iou_threshold
 
                 reply.addString("ok")
             else:
@@ -294,7 +294,7 @@ class ObjectDetectorModule(yarp.RFModule):
                     scores,
                     self.category_index,
                     use_normalized_coordinates=True,
-                    line_thickness=4,
+                    line_thickness=2,
                     min_score_thresh=0.1)
 
                 self.display_buf_array = frame
@@ -305,16 +305,25 @@ class ObjectDetectorModule(yarp.RFModule):
 
         return True
 
-    def non_max_suppression_fast(self, boxes, scores, probs=None, overlapThresh=0.3):
+    def format_boxes_coord(self, boxes):
+        new_boxes = []
+        for box in boxes:
+            left, top, right, bottom = get_bouding_box_coordinates(box, (self.width_img, self.height_img))
+            new_boxes.append([left, top, right, bottom])
 
+        return np.array(new_boxes)
+
+    def non_max_suppression_fast(self, boxes_norm, scores, probs=None, overlapThresh=0.3):
+
+        boxes = self.format_boxes_coord(boxes_norm)
         # if there are no boxes, return an empty list
         if len(boxes) == 0:
             return np.array([]), np.array([])
 
         # if the bounding boxes are integers, convert them to floats -- this
         # is important since we'll be doing a bunch of divisions
-        # if boxes.dtype.kind == "i":
-        #     boxes = boxes.astype("float")
+        if boxes.dtype.kind == "i":
+            boxes = boxes.astype("float")
 
         # initialize the list of picked indexes
         pick = []
@@ -329,7 +338,7 @@ class ObjectDetectorModule(yarp.RFModule):
         # (in the case that no probabilities are provided, simply sort on the
         # bottom-left y-coordinate)
         area = (x2 - x1 + 1) * (y2 - y1 + 1)
-        idxs = x2
+        idxs = y2
 
         # if probabilities are provided, sort on them instead
         if probs is not None:
@@ -369,7 +378,7 @@ class ObjectDetectorModule(yarp.RFModule):
 
 
         # return only the bounding boxes that were picked
-        return boxes[pick], scores[pick]
+        return boxes_norm[pick], scores[pick]
 
 
     def filter_boxes(self, boxes, scores):
@@ -383,8 +392,6 @@ class ObjectDetectorModule(yarp.RFModule):
         return np.array(filt_boxes), np.array(filt_scores)
 
         
-        
-
 
     def write_objects(self, classes, boxes, scores):
         """
