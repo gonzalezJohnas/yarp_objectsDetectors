@@ -5,6 +5,7 @@ import numpy as np
 import sys
 import os
 from utils import *
+from object_detection.utils import label_map_util
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '0'
 
@@ -19,6 +20,7 @@ def info(msg):
 
 def error(msg):
     print("[ERROR] {}".format(msg))
+
 
 class ObjectDetectorModule(yarp.RFModule):
     """
@@ -41,7 +43,7 @@ class ObjectDetectorModule(yarp.RFModule):
 
         # Define vars to receive an image
         self.input_port = yarp.BufferedPortImageRgb()
-        
+
         # Create numpy array to receive the image and the YARP image wrapped around it
         self.input_img_array = None
 
@@ -52,7 +54,6 @@ class ObjectDetectorModule(yarp.RFModule):
         self.output_img_port = yarp.Port()
         self.display_buf_array = None
         self.display_buf_image = yarp.ImageRgb()
-
 
         self.module_name = None
         self.width_img = None
@@ -65,7 +66,7 @@ class ObjectDetectorModule(yarp.RFModule):
         self.model_path = None
 
         self.cap = None
-        self.session = None
+        self.model = None
 
     def configure(self, rf):
 
@@ -89,8 +90,7 @@ class ObjectDetectorModule(yarp.RFModule):
                                   'Theshold detection score').asDouble()
 
         self.nms_iou_threshold = rf.check('filtering_distance', yarp.Value(0.8),
-                                  'Filtering distance in pixels').asDouble()
-
+                                          'Filtering distance in pixels').asDouble()
 
         self.process = rf.check('process', yarp.Value(True),
                                 'enable automatic run').asBool()
@@ -116,7 +116,6 @@ class ObjectDetectorModule(yarp.RFModule):
         self.input_port.open('/' + self.module_name + '/image:i')
         self.input_img_array = np.zeros((self.height_img, self.width_img, 3), dtype=np.uint8).tobytes()
 
-
         info('Model initialization ')
 
         if not self._read_label():
@@ -132,43 +131,20 @@ class ObjectDetectorModule(yarp.RFModule):
         return True
 
     def _load_graph(self):
-        self.detection_graph = tf.Graph()
-        with self.detection_graph.as_default():
-            # Load a (frozen) Tensorflow model into memory.
-            od_graph_def = tf.GraphDef()
-            try:
-                with tf.gfile.GFile(self.model_path, 'rb') as fid:
-                    serialized_graph = fid.read()
-                    od_graph_def.ParseFromString(serialized_graph)
-                    tf.import_graph_def(od_graph_def, name='')
-
-            except Exception as e:
-                print(e)
-                return False
-
-        self.session = tf.Session(graph=self.detection_graph)
-
-        image_tensor = self.detection_graph.get_tensor_by_name('image_tensor:0')
-        classes = self.detection_graph.get_tensor_by_name('detection_classes:0')
-
-        self.session.run(
-            [classes],
-            feed_dict={image_tensor: np.zeros((1, 320, 240, 3))})
+        try:
+            self.model = tf.keras.models.load_model(self.model_path)
+        except Exception as e:
+            error("{}".format(e))
+            return False
         return True
 
     def _read_label(self):
         try:
-            # Loading label map
-            # Label maps map indices to category names,
-            # Here we use internal utility functions
 
-            label_map = load_labelmap(self.label_path)
-            max_num_classes = max(item.id for item in label_map.item)
-            categories = convert_label_map_to_categories(
-                label_map, max_num_classes=max_num_classes, use_display_name=True)
-            self.category_index = create_category_index(categories)
+            self.category_index = label_map_util.create_category_index_from_labelmap(self.label_path, use_display_name=True)
+
         except Exception as e:
-            print(e)
+            print("Error while loading label file {}".format(e))
             return False
         return True
 
@@ -196,7 +172,7 @@ class ObjectDetectorModule(yarp.RFModule):
 
         # Is the command recognized
         rec = False
-       
+
         reply.clear()
 
         if command.get(0).asString() == "quit":
@@ -218,11 +194,13 @@ class ObjectDetectorModule(yarp.RFModule):
 
         elif command.get(0).asString() == "set":
             if command.get(1).asString() == 'thr' and command.get(2).isDouble():
-                self.threshold = command.get(2).asDouble() if (command.get(2).asDouble() > 0.0 and command.get(2).asDouble() < 1.0) else self.threshold
+                self.threshold = command.get(2).asDouble() if (
+                            command.get(2).asDouble() > 0.0 and command.get(2).asDouble() < 1.0) else self.threshold
                 reply.addString("ok")
 
             elif command.get(1).asString() == 'filt' and command.get(2).isDouble():
-                self.nms_iou_threshold =  command.get(2).asDouble() if (command.get(2).asDouble() > 0.0 and command.get(2).asDouble() < 1.0) else self.nms_iou_threshold
+                self.nms_iou_threshold = command.get(2).asDouble() if (command.get(2).asDouble() > 0.0 and command.get(
+                    2).asDouble() < 1.0) else self.nms_iou_threshold
 
                 reply.addString("ok")
             else:
@@ -256,41 +234,36 @@ class ObjectDetectorModule(yarp.RFModule):
         input_yarp_image = self.input_port.read(False)
 
         if input_yarp_image and self.process:
-            input_yarp_image.setExternal(self.input_img_array, self.width_img,self.height_img)
+            input_yarp_image.setExternal(self.input_img_array, self.width_img, self.height_img)
             frame = np.frombuffer(self.input_img_array, dtype=np.uint8).reshape(
                 (self.height_img, self.width_img, 3)).copy()
 
-            image_np_expanded = np.expand_dims(frame, axis=0)
+            # The input needs to be a tensor, convert it using `tf.convert_to_tensor`.
+            input_tensor = tf.convert_to_tensor(frame)
+            # The model expects a batch of images, so add an axis with `tf.newaxis`.
+            input_tensor = input_tensor[tf.newaxis, ...]
+            detections = self.model(input_tensor)
 
-            # # Extract image tensor
-            image_tensor = self.detection_graph.get_tensor_by_name('image_tensor:0')
-            # Extract detection boxes
-            boxes = self.detection_graph.get_tensor_by_name('detection_boxes:0')
-            # Extract detection scores
-            scores = self.detection_graph.get_tensor_by_name('detection_scores:0')
-            # Extract detection classes
-            classes = self.detection_graph.get_tensor_by_name('detection_classes:0')
-            # Extract number of detectionsd
-            num_detections = self.detection_graph.get_tensor_by_name('num_detections:0')
+            num_detections = int(detections.pop('num_detections'))
+            detections = {key: value[0, :num_detections].numpy()
+                          for key, value in detections.items()}
+            detections['num_detections'] = num_detections
+            # detection_classes should be ints.
+            detections['detection_classes'] = detections['detection_classes'].astype(np.int64)
+            # print(detections['detection_classes'])
 
-            # Actual detection.
-            (boxes, scores, classes, num_detections) = self.session.run(
-                [boxes, scores, classes, num_detections],
-                feed_dict={image_tensor: image_np_expanded})
-
-            boxes = np.squeeze(boxes)
-            scores = np.squeeze(scores)
+            boxes = detections['detection_boxes']
+            scores = detections['detection_scores']
 
             boxes, scores = self.filter_boxes(boxes, scores)
             boxes, scores = self.non_max_suppression_fast(boxes, scores, overlapThresh=self.nms_iou_threshold)
-
 
             if self.output_img_port.getOutputCount():
                 # # Visualization of the results of a detection.
                 visualize_boxes_and_labels_on_image_array(
                     frame,
                     boxes,
-                    np.squeeze(classes).astype(np.int32),
+                    detections['detection_classes'],
                     scores,
                     self.category_index,
                     use_normalized_coordinates=True,
@@ -370,28 +343,23 @@ class ObjectDetectorModule(yarp.RFModule):
             # compute the ratio of overlap
             overlap = (w * h) / area[idxs[:last]]
 
-
             # delete all indexes from the index list that have overlap greater
             # than the provided overlap threshold
             idxs = np.delete(idxs, np.concatenate(([last],
                                                    np.where(overlap > overlapThresh)[0])))
 
-
         # return only the bounding boxes that were picked
         return boxes_norm[pick], scores[pick]
-
 
     def filter_boxes(self, boxes, scores):
         filt_boxes = []
         filt_scores = []
         for i, (boxe, score) in enumerate(zip(boxes, scores)):
-            if score > self.threshold :
+            if score > self.threshold:
                 filt_boxes.append(boxe)
                 filt_scores.append(score)
 
         return np.array(filt_boxes), np.array(filt_scores)
-
-        
 
     def write_objects(self, classes, boxes, scores):
         """
@@ -406,7 +374,6 @@ class ObjectDetectorModule(yarp.RFModule):
         write_bottle = False
 
         for boxe, score, cl in zip(boxes, scores, np.squeeze(classes)):
-
 
             if score > self.threshold:
                 left, top, right, bottom = get_bouding_box_coordinates(boxe, (self.width_img, self.height_img))
