@@ -140,8 +140,11 @@ class ObjectDetectorModule(yarp.RFModule):
     def _read_label(self):
         try:
 
-            self.category_index = load_labelmap(self.label_path)
-
+            label_map = load_labelmap(self.label_path)
+            max_num_classes = max(item.id for item in label_map.item)
+            categories = convert_label_map_to_categories(
+                label_map, max_num_classes=max_num_classes, use_display_name=True)
+            self.category_index = create_category_index(categories)
         except Exception as e:
             print("Error while loading label file {}".format(e))
             return False
@@ -273,7 +276,7 @@ class ObjectDetectorModule(yarp.RFModule):
                 self.write_yarp_image(frame)
 
             if self.output_objects_port.getOutputCount():
-                self.write_objects(classes, boxes, scores)
+                self.write_objects( detections['detection_classes'] , boxes, scores)
 
         return True
 
