@@ -1,7 +1,7 @@
 import string_int_label_map_pb2
 from google.protobuf import text_format
 import logging
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 import collections
 import six 
 

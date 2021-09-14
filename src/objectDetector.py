@@ -5,7 +5,6 @@ import numpy as np
 import sys
 import os
 from utils import *
-from object_detection.utils import label_map_util
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '0'
 
@@ -141,7 +140,7 @@ class ObjectDetectorModule(yarp.RFModule):
     def _read_label(self):
         try:
 
-            self.category_index = label_map_util.create_category_index_from_labelmap(self.label_path, use_display_name=True)
+            self.category_index = load_labelmap(self.label_path)
 
         except Exception as e:
             print("Error while loading label file {}".format(e))
